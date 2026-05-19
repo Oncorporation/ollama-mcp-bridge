@@ -44,8 +44,9 @@ def test_check_ollama_health_respects_env_override(monkeypatch):
 
     called = {}
 
-    def fake_get(url, timeout):
+    def fake_get(url, timeout, headers=None):
         called["timeout"] = timeout
+        called["headers"] = headers
         return DummyResp()
 
     monkeypatch.setattr(utils.httpx, "get", fake_get)
@@ -154,8 +155,9 @@ async def test_check_ollama_health_async_respects_env_override(monkeypatch):
         async def __aexit__(self, exc_type, exc, tb):
             return False
 
-        async def get(self, url, timeout):
+        async def get(self, url, timeout, headers=None):
             self.seen_timeout = timeout
+            self.seen_headers = headers
             return types.SimpleNamespace(status_code=200)
 
     dummy_client = DummyAsyncClient()

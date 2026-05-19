@@ -19,6 +19,12 @@ def cli_app(
     ollama_url: str = typer.Option(
         os.getenv("OLLAMA_URL", "http://localhost:11434"), "--ollama-url", help="Ollama server URL"
     ),
+    ollama_header_name: Optional[str] = typer.Option(
+        None, "--ollama-header-name", help="Optional header name to send to the upstream Ollama server"
+    ),
+    ollama_header_value: Optional[str] = typer.Option(
+        None, "--ollama-header-value", help="Optional header value to send to the upstream Ollama server"
+    ),
     max_tool_rounds: Optional[int] = typer.Option(
         os.getenv("MAX_TOOL_ROUNDS", None),
         "--max-tool-rounds",
@@ -40,7 +46,18 @@ def cli_app(
         # Check for updates and print if available
         asyncio.run(check_for_updates(__version__, print_message=True))
         raise typer.Exit(0)
-    validate_cli_inputs(config, host, port, ollama_url, max_tool_rounds, system_prompt)
+    validate_cli_inputs(
+        config,
+        host,
+        port,
+        ollama_url,
+        max_tool_rounds,
+        system_prompt,
+        ollama_header_name,
+        ollama_header_value,
+    )
+
+    ollama_headers = {ollama_header_name: ollama_header_value} if ollama_header_name and ollama_header_value else None
 
     # Check if port is available and host is valid before starting
     has_error, error_msg = is_port_in_use(host, port)
@@ -51,6 +68,7 @@ def cli_app(
     # Store config in app state so lifespan can access it
     app.state.config_file = config
     app.state.ollama_url = ollama_url
+    app.state.ollama_headers = ollama_headers
     app.state.max_tool_rounds = max_tool_rounds
     app.state.system_prompt = system_prompt
 
@@ -62,7 +80,7 @@ def cli_app(
     asyncio.run(check_for_updates(__version__))
 
     # Check Ollama server health before starting
-    if not check_ollama_health(ollama_url):
+    if not check_ollama_health(ollama_url, headers=ollama_headers):
         logger.info("Please ensure Ollama is running with: ollama serve")
         raise typer.Exit(1)
 

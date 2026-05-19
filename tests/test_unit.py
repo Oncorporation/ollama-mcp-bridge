@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import sys
 from pathlib import Path
+import pytest
 
 # Add src directory to path for testing when package is not installed
 project_root = Path(__file__).parent.parent
@@ -170,6 +171,52 @@ def test_validate_cli_max_tool_rounds():
         pass
 
 
+def test_validate_cli_ollama_header_options():
+    """Test that validate_cli_inputs enforces paired Ollama header options."""
+    try:
+        from ollama_mcp_bridge.utils import validate_cli_inputs
+    except ImportError:
+        sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+        from ollama_mcp_bridge.utils import validate_cli_inputs
+
+    from typer import BadParameter
+
+    validate_cli_inputs(
+        "mcp-config.json",
+        "0.0.0.0",
+        8000,
+        "http://localhost:11434",
+        None,
+        None,
+        "X-API-Key",
+        "secret",
+    )
+
+    with pytest.raises(BadParameter):
+        validate_cli_inputs(
+            "mcp-config.json",
+            "0.0.0.0",
+            8000,
+            "http://localhost:11434",
+            None,
+            None,
+            "X-API-Key",
+            None,
+        )
+
+    with pytest.raises(BadParameter):
+        validate_cli_inputs(
+            "mcp-config.json",
+            "0.0.0.0",
+            8000,
+            "http://localhost:11434",
+            None,
+            None,
+            None,
+            "secret",
+        )
+
+
 def test_script_installed():
     try:
         result = subprocess.run(["ollama-mcp-bridge", "--help"], check=False)
@@ -178,7 +225,8 @@ def test_script_installed():
         assert False, f"Subprocess call failed. Is the script installed? {e}"
 
 
-def test_system_prompt_prepended():
+@pytest.mark.anyio
+async def test_system_prompt_prepended():
     """Test that the system prompt configured on MCPManager is prepended to messages."""
     try:
         from ollama_mcp_bridge.mcp_manager import MCPManager
@@ -190,26 +238,100 @@ def test_system_prompt_prepended():
 
     mgr = MCPManager(system_prompt="You are a helpful assistant.")
     ps = ProxyService(mgr)
+    try:
+        # Case: user message only -> system prompt should be prepended
+        messages = [{"role": "user", "content": "Hello"}]
+        out = ps._maybe_prepend_system_prompt(messages)
+        assert out[0]["role"] == "system"
+        assert out[0]["content"] == "You are a helpful assistant."
 
-    # Case: user message only -> system prompt should be prepended
-    messages = [{"role": "user", "content": "Hello"}]
-    out = ps._maybe_prepend_system_prompt(messages)
-    assert out[0]["role"] == "system"
-    assert out[0]["content"] == "You are a helpful assistant."
+        # Case: existing system prompt should not be duplicated or replaced
+        messages2 = [
+            {"role": "system", "content": "Existing"},
+            {"role": "user", "content": "Hi"},
+        ]
+        out2 = ps._maybe_prepend_system_prompt(messages2)
+        assert out2[0]["role"] == "system"
+        assert out2[0]["content"] == "Existing"
 
-    # Case: existing system prompt should not be duplicated or replaced
-    messages2 = [
-        {"role": "system", "content": "Existing"},
-        {"role": "user", "content": "Hi"},
-    ]
-    out2 = ps._maybe_prepend_system_prompt(messages2)
-    assert out2[0]["role"] == "system"
-    assert out2[0]["content"] == "Existing"
+        # Case: empty messages -> system prompt becomes the only message
+        out3 = ps._maybe_prepend_system_prompt([])
+        assert out3[0]["role"] == "system"
+        assert out3[0]["content"] == "You are a helpful assistant."
+    finally:
+        await ps.cleanup()
+        await mgr.http_client.aclose()
 
-    # Case: empty messages -> system prompt becomes the only message
-    out3 = ps._maybe_prepend_system_prompt([])
-    assert out3[0]["role"] == "system"
-    assert out3[0]["content"] == "You are a helpful assistant."
+
+@pytest.mark.anyio
+async def test_proxy_service_applies_configured_ollama_headers():
+    """Test that configured Ollama headers are attached to upstream chat requests."""
+    try:
+        from ollama_mcp_bridge.mcp_manager import MCPManager
+        from ollama_mcp_bridge.proxy_service import ProxyService
+    except ImportError:
+        sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+        from ollama_mcp_bridge.mcp_manager import MCPManager
+        from ollama_mcp_bridge.proxy_service import ProxyService
+
+    class DummyResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"message": {"content": "ok"}}
+
+    class DummyClient:
+        def __init__(self):
+            self.calls = []
+
+        async def post(self, url, json=None, headers=None):
+            self.calls.append({"url": url, "json": json, "headers": headers})
+            return DummyResponse()
+
+        async def aclose(self):
+            return None
+
+    mgr = MCPManager(ollama_headers={"X-API-Key": "secret"})
+    ps = ProxyService(mgr)
+    original_http_client = ps.http_client
+    ps.http_client = DummyClient()
+    try:
+        result = await ps._proxy_with_tools_non_streaming(
+            "/api/chat",
+            {"model": "test-model", "messages": [{"role": "user", "content": "Hello"}]},
+        )
+
+        assert result["message"]["content"] == "ok"
+        assert ps.http_client.calls[0]["headers"] == {"X-API-Key": "secret"}
+    finally:
+        dummy_client = ps.http_client
+        ps.http_client = original_http_client
+        await dummy_client.aclose()
+        await original_http_client.aclose()
+        await mgr.http_client.aclose()
+
+
+@pytest.mark.anyio
+async def test_proxy_service_merges_request_headers_with_configured_ollama_headers():
+    """Test that configured Ollama headers override conflicting forwarded request headers."""
+    try:
+        from ollama_mcp_bridge.mcp_manager import MCPManager
+        from ollama_mcp_bridge.proxy_service import ProxyService
+    except ImportError:
+        sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+        from ollama_mcp_bridge.mcp_manager import MCPManager
+        from ollama_mcp_bridge.proxy_service import ProxyService
+
+    mgr = MCPManager(ollama_headers={"X-API-Key": "secret"})
+    ps = ProxyService(mgr)
+    try:
+        headers = ps._get_ollama_headers({"Accept": "application/json", "X-API-Key": "client-value"})
+
+        assert headers == {"Accept": "application/json", "X-API-Key": "secret"}
+    finally:
+        await ps.cleanup()
+        await mgr.http_client.aclose()
 
 
 def test_is_port_in_use():

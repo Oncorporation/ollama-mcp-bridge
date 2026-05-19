@@ -57,6 +57,7 @@
 - 🛠️ **All Tools Available**: Ollama can use any tool from any connected server simultaneously
 - 🔌 **Complete API Compatibility**: `/api/chat` adds tools while all other Ollama API endpoints are transparently proxied
 - 🔧 **Configurable Ollama**: Specify custom Ollama server URL via CLI (supports local and cloud models)
+- 🔐 **Optional Upstream Header**: Send a fixed custom header with requests to the upstream Ollama server
 - ☁️ **Cloud Model Support**: Works with Ollama cloud models
 - 🔄 **Version Check**: Automatic check for newer versions with upgrade instructions
 - 🌊 **Streaming Responses**: Supports incremental streaming of responses to clients
@@ -388,6 +389,9 @@ ollama-mcp-bridge --host 0.0.0.0 --port 8080
 # Custom Ollama server URL (local or cloud)
 ollama-mcp-bridge --ollama-url http://192.168.1.100:11434
 
+# Send a fixed custom header to the upstream Ollama server
+ollama-mcp-bridge --ollama-header-name X-API-Key --ollama-header-value your-key
+
 # Limit tool execution rounds (prevents excessive tool calls)
 ollama-mcp-bridge --max-tool-rounds 5
 
@@ -396,6 +400,9 @@ ollama-mcp-bridge --system-prompt "You are a concise assistant."
 
 # Combine options
 ollama-mcp-bridge --config custom.json --host 0.0.0.0 --port 8080 --ollama-url http://remote-ollama:11434 --max-tool-rounds 10
+
+# Combine options with an upstream Ollama API key header
+ollama-mcp-bridge --config custom.json --ollama-url http://remote-ollama:11434 --ollama-header-name X-API-Key --ollama-header-value your-key --port 8080
 
 # Check version and available updates
 ollama-mcp-bridge --version
@@ -412,10 +419,14 @@ ollama-mcp-bridge --version
 - `--host`: Host to bind the server (default: `0.0.0.0`)
 - `--port`: Port to bind the server (default: `8000`)
 - `--ollama-url`: Ollama server URL (default: `http://localhost:11434`)
+- `--ollama-header-name`: Optional header name to send to the upstream Ollama server (must be used together with `--ollama-header-value`)
+- `--ollama-header-value`: Optional header value to send to the upstream Ollama server (must be used together with `--ollama-header-name`)
 - `--max-tool-rounds`: Maximum tool execution rounds (default: unlimited)
 - `--reload`: Enable auto-reload during development
 - `--version`: Show version information, check for updates and exit
 - `--system-prompt`: Optional system prompt to prepend to `/api/chat` requests (default: none)
+
+When configured, the custom upstream header is added to bridge health checks and all requests that the bridge sends to the upstream Ollama server, including `/api/chat` and transparently proxied Ollama endpoints.
 ### API Usage
 
 The API is available at `http://localhost:8000`.
