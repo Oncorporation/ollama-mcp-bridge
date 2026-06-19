@@ -28,6 +28,7 @@ def cli_app(
         os.getenv("OLLAMA_HEADER_VALUE", None),
         "--ollama-header-value",
         help="Optional header value to send to the upstream Ollama server",
+        show_default=False,
     ),
     max_tool_rounds: Optional[int] = typer.Option(
         os.getenv("MAX_TOOL_ROUNDS", None),
