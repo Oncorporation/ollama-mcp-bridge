@@ -1,8 +1,33 @@
 """Tests for OLLAMA_HEADER_NAME and OLLAMA_HEADER_VALUE environment variables"""
 
-import pytest
-from unittest.mock import patch
+import importlib
 import os
+
+import pytest
+import typer
+from typer.testing import CliRunner
+from unittest.mock import patch
+
+
+@pytest.fixture(autouse=True)
+def reload_main_module():
+    """cli_app's typer.Option defaults capture os.getenv(...) at import time, so reload
+    the module after each test to avoid leaking env-var-bound defaults into later tests.
+    """
+    yield
+    import ollama_mcp_bridge.main
+
+    importlib.reload(ollama_mcp_bridge.main)
+
+
+def _invoke_cli_app(args):
+    """CliRunner needs a real Typer app, not the raw function used by typer.run()."""
+    import ollama_mcp_bridge.main
+
+    importlib.reload(ollama_mcp_bridge.main)  # re-bind os.getenv(...) defaults to current env
+    app = typer.Typer()
+    app.command()(ollama_mcp_bridge.main.cli_app)
+    return CliRunner().invoke(app, args)
 
 
 def test_ollama_headers_from_env_vars(monkeypatch):
@@ -10,9 +35,7 @@ def test_ollama_headers_from_env_vars(monkeypatch):
     monkeypatch.setenv("OLLAMA_HEADER_NAME", "Authorization")
     monkeypatch.setenv("OLLAMA_HEADER_VALUE", "Bearer test-token")
 
-    # Import after setting env vars
-    from ollama_mcp_bridge.main import cli_app
-    from typer.testing import CliRunner
+    from ollama_mcp_bridge.api import app as fastapi_app
 
     # Mock the validation and health check to prevent actual server startup
     with (
@@ -22,13 +45,11 @@ def test_ollama_headers_from_env_vars(monkeypatch):
         patch("ollama_mcp_bridge.main.check_for_updates"),
         patch("ollama_mcp_bridge.main.uvicorn.run") as mock_uvicorn,
     ):
+        result = _invoke_cli_app(["--config", "mcp-config.json"])
 
-        # Create a runner and invoke the CLI
-        runner = CliRunner()
-        result = runner.invoke(cli_app, ["--config", "mcp-config.json"])
-
-        # Verify the app was called (it would start the server)
-        mock_uvicorn.assert_called_once()
+    assert result.exit_code == 0, result.output
+    mock_uvicorn.assert_called_once()
+    assert fastapi_app.state.ollama_headers == {"Authorization": "Bearer test-token"}
 
 
 def test_ollama_headers_cli_overrides_env(monkeypatch):
@@ -36,20 +57,16 @@ def test_ollama_headers_cli_overrides_env(monkeypatch):
     monkeypatch.setenv("OLLAMA_HEADER_NAME", "X-Default-Key")
     monkeypatch.setenv("OLLAMA_HEADER_VALUE", "default-value")
 
-    from ollama_mcp_bridge.main import cli_app
-    from typer.testing import CliRunner
+    from ollama_mcp_bridge.api import app as fastapi_app
 
     with (
         patch("ollama_mcp_bridge.main.validate_cli_inputs"),
         patch("ollama_mcp_bridge.main.is_port_in_use", return_value=(False, "")),
         patch("ollama_mcp_bridge.main.check_ollama_health", return_value=True),
         patch("ollama_mcp_bridge.main.check_for_updates"),
-        patch("ollama_mcp_bridge.main.uvicorn.run"),
+        patch("ollama_mcp_bridge.main.uvicorn.run") as mock_uvicorn,
     ):
-
-        runner = CliRunner()
-        result = runner.invoke(
-            cli_app,
+        result = _invoke_cli_app(
             [
                 "--config",
                 "mcp-config.json",
@@ -57,8 +74,12 @@ def test_ollama_headers_cli_overrides_env(monkeypatch):
                 "X-Custom-Key",
                 "--ollama-header-value",
                 "custom-value",
-            ],
+            ]
         )
+
+    assert result.exit_code == 0, result.output
+    mock_uvicorn.assert_called_once()
+    assert fastapi_app.state.ollama_headers == {"X-Custom-Key": "custom-value"}
 
 
 def test_ollama_headers_unset_when_env_vars_missing(monkeypatch):
@@ -66,40 +87,42 @@ def test_ollama_headers_unset_when_env_vars_missing(monkeypatch):
     monkeypatch.delenv("OLLAMA_HEADER_NAME", raising=False)
     monkeypatch.delenv("OLLAMA_HEADER_VALUE", raising=False)
 
-    from ollama_mcp_bridge.main import cli_app
-    from typer.testing import CliRunner
+    from ollama_mcp_bridge.api import app as fastapi_app
 
     with (
         patch("ollama_mcp_bridge.main.validate_cli_inputs"),
         patch("ollama_mcp_bridge.main.is_port_in_use", return_value=(False, "")),
         patch("ollama_mcp_bridge.main.check_ollama_health", return_value=True),
         patch("ollama_mcp_bridge.main.check_for_updates"),
-        patch("ollama_mcp_bridge.main.uvicorn.run"),
+        patch("ollama_mcp_bridge.main.uvicorn.run") as mock_uvicorn,
     ):
+        result = _invoke_cli_app(["--config", "mcp-config.json"])
 
-        runner = CliRunner()
-        result = runner.invoke(cli_app, ["--config", "mcp-config.json"])
+    assert result.exit_code == 0, result.output
+    mock_uvicorn.assert_called_once()
+    assert fastapi_app.state.ollama_headers is None
 
 
 def test_ollama_headers_partial_env_vars(monkeypatch):
-    """Test behavior when only one of the header env vars is set"""
+    """Test that validation rejects a header name set without a matching header value"""
     monkeypatch.setenv("OLLAMA_HEADER_NAME", "X-API-Key")
     monkeypatch.delenv("OLLAMA_HEADER_VALUE", raising=False)
 
-    from ollama_mcp_bridge.main import cli_app
-    from typer.testing import CliRunner
-
+    # validate_cli_inputs is intentionally left unmocked here: this test exists to
+    # confirm it actually rejects a lone header name, not just that the CLI doesn't crash.
     with (
-        patch("ollama_mcp_bridge.main.validate_cli_inputs"),
         patch("ollama_mcp_bridge.main.is_port_in_use", return_value=(False, "")),
         patch("ollama_mcp_bridge.main.check_ollama_health", return_value=True),
         patch("ollama_mcp_bridge.main.check_for_updates"),
         patch("ollama_mcp_bridge.main.uvicorn.run"),
     ):
+        result = _invoke_cli_app(["--config", "mcp-config.json"])
 
-        runner = CliRunner()
-        # This should work - the validation logic should handle partial values
-        result = runner.invoke(cli_app, ["--config", "mcp-config.json"])
+    assert result.exit_code == 2
+    # Rich wraps the error text across lines, so check for the flags rather than the full sentence.
+    assert "--ollama-header-name" in result.output
+    assert "--ollama-header-value" in result.output
+    assert "must be" in result.output
 
 
 @pytest.mark.anyio
