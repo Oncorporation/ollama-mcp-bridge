@@ -358,6 +358,14 @@ CORS_ORIGINS="http://localhost:3000,http://localhost:8080,https://app.example.co
   - Can be overridden with `--ollama-url` CLI parameter
   - Useful for Docker deployments and configuration management
   - Example: `OLLAMA_URL=http://192.168.1.100:11434 ollama-mcp-bridge`
+- `OLLAMA_HEADER_NAME`: Optional header name to send to the upstream Ollama server
+  - Can be overridden with `--ollama-header-name` CLI parameter
+  - Must be used in conjunction with `OLLAMA_HEADER_VALUE`
+  - Example: `OLLAMA_HEADER_NAME="Authorization" OLLAMA_HEADER_VALUE="Bearer token123" ollama-mcp-bridge`
+- `OLLAMA_HEADER_VALUE`: Optional header value to send to the upstream Ollama server
+  - Can be overridden with `--ollama-header-value` CLI parameter
+  - Must be used in conjunction with `OLLAMA_HEADER_NAME`
+  - Example: `OLLAMA_HEADER_NAME="X-API-Key" OLLAMA_HEADER_VALUE="secret" ollama-mcp-bridge`
 - `OLLAMA_PROXY_TIMEOUT`: Timeout for HTTP requests sent to Ollama, in **milliseconds** (default: unset)
   - When **unset**, the bridge keeps its existing behavior (some requests use library defaults; `/api/chat` is not timed out)
   - When set to a value **> 0**, the timeout is applied to Ollama-bound HTTP requests

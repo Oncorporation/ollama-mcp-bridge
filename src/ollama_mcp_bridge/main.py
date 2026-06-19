@@ -20,10 +20,14 @@ def cli_app(
         os.getenv("OLLAMA_URL", "http://localhost:11434"), "--ollama-url", help="Ollama server URL"
     ),
     ollama_header_name: Optional[str] = typer.Option(
-        None, "--ollama-header-name", help="Optional header name to send to the upstream Ollama server"
+        os.getenv("OLLAMA_HEADER_NAME", None),
+        "--ollama-header-name",
+        help="Optional header name to send to the upstream Ollama server",
     ),
     ollama_header_value: Optional[str] = typer.Option(
-        None, "--ollama-header-value", help="Optional header value to send to the upstream Ollama server"
+        os.getenv("OLLAMA_HEADER_VALUE", None),
+        "--ollama-header-value",
+        help="Optional header value to send to the upstream Ollama server",
     ),
     max_tool_rounds: Optional[int] = typer.Option(
         os.getenv("MAX_TOOL_ROUNDS", None),

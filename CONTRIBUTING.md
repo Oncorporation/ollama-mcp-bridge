@@ -53,6 +53,16 @@ OLLAMA_PROXY_TIMEOUT=600000 uv run pytest
 OLLAMA_PROXY_TIMEOUT=0 uv run pytest
 ```
 
+For testing custom headers to Ollama:
+
+```bash
+# Set custom header for Ollama requests
+OLLAMA_HEADER_NAME="Authorization" OLLAMA_HEADER_VALUE="Bearer token123" uv run ollama-mcp-bridge
+
+# Or with X-API-Key
+OLLAMA_HEADER_NAME="X-API-Key" OLLAMA_HEADER_VALUE="secret" uv run ollama-mcp-bridge
+```
+
 ## Before Committing
 
 1. **Format your code**: `black .`
