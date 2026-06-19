@@ -23,8 +23,14 @@ class ProxyService:
         self.http_client = httpx.AsyncClient(timeout=timeout_seconds) if is_set else httpx.AsyncClient(timeout=None)
 
     def _get_ollama_headers(self, request_headers: Optional[Dict[str, str]] = None) -> Dict[str, str]:
-        """Merge configured Ollama headers with optional forwarded request headers."""
-        headers = dict(request_headers or {})
+        """Merge configured Ollama headers with optional forwarded request headers.
+
+        HTTP header names are case-insensitive, but plain dicts are not, so forwarded
+        headers are filtered by lowercase name to avoid sending both the forwarded and
+        configured value for the same header (e.g. "authorization" and "Authorization").
+        """
+        configured_names = {name.lower() for name in self.ollama_headers}
+        headers = {k: v for k, v in (request_headers or {}).items() if k.lower() not in configured_names}
         headers.update(self.ollama_headers)
         return headers
 

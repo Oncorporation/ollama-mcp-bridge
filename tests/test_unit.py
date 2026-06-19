@@ -329,6 +329,12 @@ async def test_proxy_service_merges_request_headers_with_configured_ollama_heade
         headers = ps._get_ollama_headers({"Accept": "application/json", "X-API-Key": "client-value"})
 
         assert headers == {"Accept": "application/json", "X-API-Key": "secret"}
+
+        # Forwarded headers arrive lowercased (per the ASGI spec), so the override
+        # must be case-insensitive or both values would be sent upstream.
+        headers_case_mismatch = ps._get_ollama_headers({"accept": "application/json", "x-api-key": "client-value"})
+
+        assert headers_case_mismatch == {"accept": "application/json", "X-API-Key": "secret"}
     finally:
         await ps.cleanup()
         await mgr.http_client.aclose()
