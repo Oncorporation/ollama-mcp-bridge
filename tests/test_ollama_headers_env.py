@@ -20,13 +20,23 @@ def reload_main_module():
     importlib.reload(ollama_mcp_bridge.main)
 
 
-def _invoke_cli_app(args):
-    """CliRunner needs a real Typer app, not the raw function used by typer.run()."""
+def _reload_main():
+    """Re-bind cli_app's os.getenv(...)-sourced defaults to the current environment.
+
+    Must be called before any `patch("ollama_mcp_bridge.main....")` is active: reload
+    re-runs the module's `from .utils import ...` line, which would silently overwrite
+    an already-applied patch back to the real function.
+    """
     import ollama_mcp_bridge.main
 
-    importlib.reload(ollama_mcp_bridge.main)  # re-bind os.getenv(...) defaults to current env
+    importlib.reload(ollama_mcp_bridge.main)
+    return ollama_mcp_bridge.main
+
+
+def _invoke_cli_app(main_module, args):
+    """CliRunner needs a real Typer app, not the raw function used by typer.run()."""
     app = typer.Typer()
-    app.command()(ollama_mcp_bridge.main.cli_app)
+    app.command()(main_module.cli_app)
     return CliRunner().invoke(app, args)
 
 
@@ -35,6 +45,7 @@ def test_ollama_headers_from_env_vars(monkeypatch):
     monkeypatch.setenv("OLLAMA_HEADER_NAME", "Authorization")
     monkeypatch.setenv("OLLAMA_HEADER_VALUE", "Bearer test-token")
 
+    main_module = _reload_main()
     from ollama_mcp_bridge.api import app as fastapi_app
 
     # Mock the validation and health check to prevent actual server startup
@@ -45,7 +56,7 @@ def test_ollama_headers_from_env_vars(monkeypatch):
         patch("ollama_mcp_bridge.main.check_for_updates"),
         patch("ollama_mcp_bridge.main.uvicorn.run") as mock_uvicorn,
     ):
-        result = _invoke_cli_app(["--config", "mcp-config.json"])
+        result = _invoke_cli_app(main_module, ["--config", "mcp-config.json"])
 
     assert result.exit_code == 0, result.output
     mock_uvicorn.assert_called_once()
@@ -57,6 +68,7 @@ def test_ollama_headers_cli_overrides_env(monkeypatch):
     monkeypatch.setenv("OLLAMA_HEADER_NAME", "X-Default-Key")
     monkeypatch.setenv("OLLAMA_HEADER_VALUE", "default-value")
 
+    main_module = _reload_main()
     from ollama_mcp_bridge.api import app as fastapi_app
 
     with (
@@ -67,6 +79,7 @@ def test_ollama_headers_cli_overrides_env(monkeypatch):
         patch("ollama_mcp_bridge.main.uvicorn.run") as mock_uvicorn,
     ):
         result = _invoke_cli_app(
+            main_module,
             [
                 "--config",
                 "mcp-config.json",
@@ -74,7 +87,7 @@ def test_ollama_headers_cli_overrides_env(monkeypatch):
                 "X-Custom-Key",
                 "--ollama-header-value",
                 "custom-value",
-            ]
+            ],
         )
 
     assert result.exit_code == 0, result.output
@@ -87,6 +100,7 @@ def test_ollama_headers_unset_when_env_vars_missing(monkeypatch):
     monkeypatch.delenv("OLLAMA_HEADER_NAME", raising=False)
     monkeypatch.delenv("OLLAMA_HEADER_VALUE", raising=False)
 
+    main_module = _reload_main()
     from ollama_mcp_bridge.api import app as fastapi_app
 
     with (
@@ -96,7 +110,7 @@ def test_ollama_headers_unset_when_env_vars_missing(monkeypatch):
         patch("ollama_mcp_bridge.main.check_for_updates"),
         patch("ollama_mcp_bridge.main.uvicorn.run") as mock_uvicorn,
     ):
-        result = _invoke_cli_app(["--config", "mcp-config.json"])
+        result = _invoke_cli_app(main_module, ["--config", "mcp-config.json"])
 
     assert result.exit_code == 0, result.output
     mock_uvicorn.assert_called_once()
@@ -108,6 +122,8 @@ def test_ollama_headers_partial_env_vars(monkeypatch):
     monkeypatch.setenv("OLLAMA_HEADER_NAME", "X-API-Key")
     monkeypatch.delenv("OLLAMA_HEADER_VALUE", raising=False)
 
+    main_module = _reload_main()
+
     # validate_cli_inputs is intentionally left unmocked here: this test exists to
     # confirm it actually rejects a lone header name, not just that the CLI doesn't crash.
     with (
@@ -116,7 +132,7 @@ def test_ollama_headers_partial_env_vars(monkeypatch):
         patch("ollama_mcp_bridge.main.check_for_updates"),
         patch("ollama_mcp_bridge.main.uvicorn.run"),
     ):
-        result = _invoke_cli_app(["--config", "mcp-config.json"])
+        result = _invoke_cli_app(main_module, ["--config", "mcp-config.json"])
 
     assert result.exit_code == 2
     # Rich wraps the error text across lines, so check for the flags rather than the full sentence.
