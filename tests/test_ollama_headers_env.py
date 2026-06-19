@@ -2,11 +2,14 @@
 
 import importlib
 import os
+import re
 
 import pytest
 import typer
 from typer.testing import CliRunner
 from unittest.mock import patch
+
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 
 @pytest.fixture(autouse=True)
@@ -135,10 +138,12 @@ def test_ollama_headers_partial_env_vars(monkeypatch):
         result = _invoke_cli_app(main_module, ["--config", "mcp-config.json"])
 
     assert result.exit_code == 2
-    # Rich wraps the error text across lines, so check for the flags rather than the full sentence.
-    assert "--ollama-header-name" in result.output
-    assert "--ollama-header-value" in result.output
-    assert "must be" in result.output
+    # Rich may colorize and wrap the error text (e.g. in a real terminal/CI), splitting
+    # flag names across ANSI escape codes, so strip those before checking for substrings.
+    output = _ANSI_ESCAPE_RE.sub("", result.output)
+    assert "--ollama-header-name" in output
+    assert "--ollama-header-value" in output
+    assert "must be" in output
 
 
 @pytest.mark.anyio
