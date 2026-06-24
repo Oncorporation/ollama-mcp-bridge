@@ -171,52 +171,6 @@ def test_validate_cli_max_tool_rounds():
         pass
 
 
-def test_validate_cli_ollama_header_options():
-    """Test that validate_cli_inputs enforces paired Ollama header options."""
-    try:
-        from ollama_mcp_bridge.utils import validate_cli_inputs
-    except ImportError:
-        sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-        from ollama_mcp_bridge.utils import validate_cli_inputs
-
-    from typer import BadParameter
-
-    validate_cli_inputs(
-        "mcp-config.json",
-        "0.0.0.0",
-        8000,
-        "http://localhost:11434",
-        None,
-        None,
-        "X-API-Key",
-        "secret",
-    )
-
-    with pytest.raises(BadParameter):
-        validate_cli_inputs(
-            "mcp-config.json",
-            "0.0.0.0",
-            8000,
-            "http://localhost:11434",
-            None,
-            None,
-            "X-API-Key",
-            None,
-        )
-
-    with pytest.raises(BadParameter):
-        validate_cli_inputs(
-            "mcp-config.json",
-            "0.0.0.0",
-            8000,
-            "http://localhost:11434",
-            None,
-            None,
-            None,
-            "secret",
-        )
-
-
 def test_script_installed():
     try:
         result = subprocess.run(["ollama-mcp-bridge", "--help"], check=False)
@@ -379,7 +333,7 @@ def test_cli_exit_if_port_in_use(monkeypatch):
     monkeypatch.setattr("ollama_mcp_bridge.main.validate_cli_inputs", MagicMock())
 
     try:
-        cli_app(port=8000, version=False)
+        cli_app(port=8000, version=False, upstream_header=[])
         assert False, "Should have raised typer.Exit(1)"
     except typer.Exit as e:
         assert e.exit_code == 1

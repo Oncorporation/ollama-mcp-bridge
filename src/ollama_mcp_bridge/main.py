@@ -5,10 +5,10 @@ import asyncio
 import typer
 import uvicorn
 from loguru import logger
-from typing import Optional
+from typing import List, Optional
 
 from .api import app
-from .utils import check_ollama_health, check_for_updates, validate_cli_inputs, is_port_in_use
+from .utils import check_ollama_health, check_for_updates, validate_cli_inputs, is_port_in_use, parse_upstream_headers
 from . import __version__
 
 
@@ -19,16 +19,11 @@ def cli_app(
     ollama_url: str = typer.Option(
         os.getenv("OLLAMA_URL", "http://localhost:11434"), "--ollama-url", help="Ollama server URL"
     ),
-    ollama_header_name: Optional[str] = typer.Option(
-        os.getenv("OLLAMA_HEADER_NAME", None),
-        "--ollama-header-name",
-        help="Optional header name to send to the upstream Ollama server",
-    ),
-    ollama_header_value: Optional[str] = typer.Option(
-        os.getenv("OLLAMA_HEADER_VALUE", None),
-        "--ollama-header-value",
-        help="Optional header value to send to the upstream Ollama server",
-        show_default=False,
+    upstream_header: List[str] = typer.Option(
+        [],
+        "--upstream-header",
+        help="Header to send to the upstream server as 'Name: Value' (repeatable). "
+        "Can also be set via the UPSTREAM_HEADERS env var (JSON object).",
     ),
     max_tool_rounds: Optional[int] = typer.Option(
         os.getenv("MAX_TOOL_ROUNDS", None),
@@ -51,18 +46,9 @@ def cli_app(
         # Check for updates and print if available
         asyncio.run(check_for_updates(__version__, print_message=True))
         raise typer.Exit(0)
-    validate_cli_inputs(
-        config,
-        host,
-        port,
-        ollama_url,
-        max_tool_rounds,
-        system_prompt,
-        ollama_header_name,
-        ollama_header_value,
-    )
+    validate_cli_inputs(config, host, port, ollama_url, max_tool_rounds, system_prompt)
 
-    ollama_headers = {ollama_header_name: ollama_header_value} if ollama_header_name and ollama_header_value else None
+    upstream_headers = parse_upstream_headers(os.getenv("UPSTREAM_HEADERS"), upstream_header)
 
     # Check if port is available and host is valid before starting
     has_error, error_msg = is_port_in_use(host, port)
@@ -73,7 +59,7 @@ def cli_app(
     # Store config in app state so lifespan can access it
     app.state.config_file = config
     app.state.ollama_url = ollama_url
-    app.state.ollama_headers = ollama_headers
+    app.state.ollama_headers = upstream_headers
     app.state.max_tool_rounds = max_tool_rounds
     app.state.system_prompt = system_prompt
 
@@ -85,7 +71,7 @@ def cli_app(
     asyncio.run(check_for_updates(__version__))
 
     # Check Ollama server health before starting
-    if not check_ollama_health(ollama_url, headers=ollama_headers):
+    if not check_ollama_health(ollama_url, headers=upstream_headers):
         logger.info("Please ensure Ollama is running with: ollama serve")
         raise typer.Exit(1)
 

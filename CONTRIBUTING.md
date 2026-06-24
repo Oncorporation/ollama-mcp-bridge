@@ -53,14 +53,15 @@ OLLAMA_PROXY_TIMEOUT=600000 uv run pytest
 OLLAMA_PROXY_TIMEOUT=0 uv run pytest
 ```
 
-For testing custom headers to Ollama:
+For testing custom upstream headers:
 
 ```bash
-# Set custom header for Ollama requests
-OLLAMA_HEADER_NAME="Authorization" OLLAMA_HEADER_VALUE="Bearer token123" uv run ollama-mcp-bridge
+# Repeatable CLI flag, curl-style "Name: Value"
+uv run ollama-mcp-bridge --upstream-header "Authorization: Bearer token123"
+uv run ollama-mcp-bridge --upstream-header "Authorization: Bearer xxx" --upstream-header "X-API-Key: yyy"
 
-# Or with X-API-Key
-OLLAMA_HEADER_NAME="X-API-Key" OLLAMA_HEADER_VALUE="secret" uv run ollama-mcp-bridge
+# Or via the UPSTREAM_HEADERS env var (JSON object)
+UPSTREAM_HEADERS='{"X-API-Key": "secret"}' uv run ollama-mcp-bridge
 ```
 
 ## Before Committing

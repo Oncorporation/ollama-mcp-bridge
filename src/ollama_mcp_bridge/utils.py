@@ -169,6 +169,40 @@ async def iter_ndjson_chunks(chunk_iterator):
             logger.debug(f"Error parsing trailing NDJSON: {e}")
 
 
+def parse_upstream_headers(env_value: Optional[str], header_flags: Optional[list] = None) -> Optional[Dict[str, str]]:
+    """Build the upstream headers dict from the UPSTREAM_HEADERS env var and CLI flags.
+
+    Args:
+        env_value: Raw UPSTREAM_HEADERS env var, expected to be a JSON object of
+            header name/value pairs (e.g. '{"Authorization": "Bearer xxx"}').
+        header_flags: Repeatable --upstream-header values, each "Name: Value".
+
+    CLI flags override env entries with the same header name. Returns None when no
+    headers are configured.
+    """
+    headers: Dict[str, str] = {}
+
+    if env_value and env_value.strip():
+        try:
+            parsed = json.loads(env_value)
+        except json.JSONDecodeError as e:
+            raise BadParameter(f"UPSTREAM_HEADERS must be a valid JSON object: {e}")
+        if not isinstance(parsed, dict):
+            raise BadParameter("UPSTREAM_HEADERS must be a JSON object of header name/value pairs")
+        for name, value in parsed.items():
+            if not str(name).strip():
+                raise BadParameter("UPSTREAM_HEADERS contains an empty header name")
+            headers[str(name).strip()] = str(value)
+
+    for raw in header_flags or []:
+        name, sep, value = raw.partition(":")
+        if not sep or not name.strip():
+            raise BadParameter(f"Invalid --upstream-header {raw!r}, expected 'Name: Value'")
+        headers[name.strip()] = value.strip()
+
+    return headers or None
+
+
 def validate_cli_inputs(
     config: str,
     host: str,
@@ -176,8 +210,6 @@ def validate_cli_inputs(
     ollama_url: str,
     max_tool_rounds: int = None,
     system_prompt: str = None,
-    ollama_header_name: str = None,
-    ollama_header_value: str = None,
 ):
     """Validate CLI inputs for config file, host, port, ollama_url, max_tool_rounds and system_prompt.
 
@@ -204,15 +236,6 @@ def validate_cli_inputs(
     # Validate max_tool_rounds
     if max_tool_rounds is not None and max_tool_rounds < 1:
         raise BadParameter(f"max_tool_rounds must be at least 1, got {max_tool_rounds}")
-
-    if bool(ollama_header_name) != bool(ollama_header_value):
-        raise BadParameter("--ollama-header-name and --ollama-header-value must be provided together")
-
-    if ollama_header_name is not None:
-        if not isinstance(ollama_header_name, str) or not ollama_header_name.strip():
-            raise BadParameter("--ollama-header-name must be a non-empty string")
-        if not isinstance(ollama_header_value, str) or not ollama_header_value.strip():
-            raise BadParameter("--ollama-header-value must be a non-empty string")
 
     # Validate system_prompt (if provided)
     if system_prompt is not None:

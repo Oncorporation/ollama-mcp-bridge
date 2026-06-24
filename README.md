@@ -57,7 +57,7 @@
 - 🛠️ **All Tools Available**: Ollama can use any tool from any connected server simultaneously
 - 🔌 **Complete API Compatibility**: `/api/chat` adds tools while all other Ollama API endpoints are transparently proxied
 - 🔧 **Configurable Ollama**: Specify custom Ollama server URL via CLI (supports local and cloud models)
-- 🔐 **Optional Upstream Header**: Send a fixed custom header with requests to the upstream Ollama server
+- 🔐 **Optional Upstream Headers**: Send fixed custom headers (e.g. an API key) with every request to the upstream server
 - ☁️ **Cloud Model Support**: Works with Ollama cloud models
 - 🔄 **Version Check**: Automatic check for newer versions with upgrade instructions
 - 🌊 **Streaming Responses**: Supports incremental streaming of responses to clients
@@ -358,14 +358,11 @@ CORS_ORIGINS="http://localhost:3000,http://localhost:8080,https://app.example.co
   - Can be overridden with `--ollama-url` CLI parameter
   - Useful for Docker deployments and configuration management
   - Example: `OLLAMA_URL=http://192.168.1.100:11434 ollama-mcp-bridge`
-- `OLLAMA_HEADER_NAME`: Optional header name to send to the upstream Ollama server
-  - Can be overridden with `--ollama-header-name` CLI parameter
-  - Must be used in conjunction with `OLLAMA_HEADER_VALUE`
-  - Example: `OLLAMA_HEADER_NAME="Authorization" OLLAMA_HEADER_VALUE="Bearer token123" ollama-mcp-bridge`
-- `OLLAMA_HEADER_VALUE`: Optional header value to send to the upstream Ollama server
-  - Can be overridden with `--ollama-header-value` CLI parameter
-  - Must be used in conjunction with `OLLAMA_HEADER_NAME`
-  - Example: `OLLAMA_HEADER_NAME="X-API-Key" OLLAMA_HEADER_VALUE="secret" ollama-mcp-bridge`
+- `UPSTREAM_HEADERS`: Optional JSON object of headers to send to the upstream server (e.g. for API key authentication)
+  - These headers are not consumed by Ollama itself, but by whatever sits between the bridge and Ollama (reverse proxy / gateway / auth layer) — the upstream
+  - Can be extended/overridden per-header with the repeatable `--upstream-header` CLI parameter (CLI takes precedence)
+  - Useful for Docker deployments where headers shouldn't appear in the process list
+  - Example: `UPSTREAM_HEADERS='{"Authorization": "Bearer token123", "X-API-Key": "secret"}' ollama-mcp-bridge`
 - `OLLAMA_PROXY_TIMEOUT`: Timeout for HTTP requests sent to Ollama, in **milliseconds** (default: unset)
   - When **unset**, the bridge keeps its existing behavior (some requests use library defaults; `/api/chat` is not timed out)
   - When set to a value **> 0**, the timeout is applied to Ollama-bound HTTP requests
@@ -397,8 +394,12 @@ ollama-mcp-bridge --host 0.0.0.0 --port 8080
 # Custom Ollama server URL (local or cloud)
 ollama-mcp-bridge --ollama-url http://192.168.1.100:11434
 
-# Send a fixed custom header to the upstream Ollama server
-ollama-mcp-bridge --ollama-header-name X-API-Key --ollama-header-value your-key
+# Send custom header(s) to the upstream server (repeatable, curl-style "Name: Value")
+ollama-mcp-bridge --upstream-header "X-API-Key: your-key"
+ollama-mcp-bridge --upstream-header "Authorization: Bearer xxx" --upstream-header "X-API-Key: yyy"
+
+# Keep the secret out of your shell history by letting the shell expand an env var
+ollama-mcp-bridge --upstream-header "Authorization: Bearer $MY_API_KEY"
 
 # Limit tool execution rounds (prevents excessive tool calls)
 ollama-mcp-bridge --max-tool-rounds 5
@@ -409,8 +410,8 @@ ollama-mcp-bridge --system-prompt "You are a concise assistant."
 # Combine options
 ollama-mcp-bridge --config custom.json --host 0.0.0.0 --port 8080 --ollama-url http://remote-ollama:11434 --max-tool-rounds 10
 
-# Combine options with an upstream Ollama API key header
-ollama-mcp-bridge --config custom.json --ollama-url http://remote-ollama:11434 --ollama-header-name X-API-Key --ollama-header-value your-key --port 8080
+# Combine options with an upstream API key header
+ollama-mcp-bridge --config custom.json --ollama-url http://remote-ollama:11434 --upstream-header "X-API-Key: your-key" --port 8080
 
 # Check version and available updates
 ollama-mcp-bridge --version
@@ -427,14 +428,13 @@ ollama-mcp-bridge --version
 - `--host`: Host to bind the server (default: `0.0.0.0`)
 - `--port`: Port to bind the server (default: `8000`)
 - `--ollama-url`: Ollama server URL (default: `http://localhost:11434`)
-- `--ollama-header-name`: Optional header name to send to the upstream Ollama server (must be used together with `--ollama-header-value`)
-- `--ollama-header-value`: Optional header value to send to the upstream Ollama server (must be used together with `--ollama-header-name`)
+- `--upstream-header`: Header to send to the upstream server as `"Name: Value"` (repeatable; can also be set via the `UPSTREAM_HEADERS` env var)
 - `--max-tool-rounds`: Maximum tool execution rounds (default: unlimited)
 - `--reload`: Enable auto-reload during development
 - `--version`: Show version information, check for updates and exit
 - `--system-prompt`: Optional system prompt to prepend to `/api/chat` requests (default: none)
 
-When configured, the custom upstream header is added to bridge health checks and all requests that the bridge sends to the upstream Ollama server, including `/api/chat` and transparently proxied Ollama endpoints.
+When configured, the custom upstream headers are added to bridge health checks and all requests that the bridge sends to the upstream server, including `/api/chat` and transparently proxied Ollama endpoints.
 ### API Usage
 
 The API is available at `http://localhost:8000`.
