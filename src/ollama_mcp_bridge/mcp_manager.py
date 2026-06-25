@@ -2,7 +2,7 @@
 
 import json
 import sys
-from typing import List, Dict
+from typing import List, Dict, Optional
 from contextlib import AsyncExitStack
 import os
 import httpx
@@ -17,7 +17,12 @@ from .utils import expand_dict_env_vars, get_ollama_proxy_timeout_config
 class MCPManager:
     """Manager for MCP servers, handling tool definitions and session management."""
 
-    def __init__(self, ollama_url: str = "http://localhost:11434", system_prompt: str = None):
+    def __init__(
+        self,
+        ollama_url: str = "http://localhost:11434",
+        system_prompt: str = None,
+        ollama_headers: Optional[Dict[str, str]] = None,
+    ):
         """Initialize MCP Manager
 
         Args:
@@ -27,6 +32,7 @@ class MCPManager:
         self.all_tools: List[dict] = []
         self.exit_stack = AsyncExitStack()
         self.ollama_url = ollama_url
+        self.ollama_headers = ollama_headers or {}
         # Optional system prompt that can be prepended to messages
         self.system_prompt = system_prompt
         is_set, timeout_seconds = get_ollama_proxy_timeout_config()

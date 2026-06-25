@@ -1,7 +1,7 @@
 """Service for handling proxy requests to Ollama"""
 
 import json
-from typing import Dict, Any, AsyncGenerator, Union
+from typing import Dict, Any, AsyncGenerator, Union, Optional
 import httpx
 from fastapi import Request, Response, HTTPException
 from fastapi.responses import StreamingResponse
@@ -17,9 +17,22 @@ class ProxyService:
     def __init__(self, mcp_manager: MCPManager):
         """Initialize the proxy service with an MCP manager."""
         self.mcp_manager = mcp_manager
+        self.ollama_headers = dict(getattr(mcp_manager, "ollama_headers", {}) or {})
         is_set, timeout_seconds = get_ollama_proxy_timeout_config()
         # Preserve existing behavior when unset (no timeout for /api/chat). If set, honor it.
         self.http_client = httpx.AsyncClient(timeout=timeout_seconds) if is_set else httpx.AsyncClient(timeout=None)
+
+    def _get_ollama_headers(self, request_headers: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+        """Merge configured Ollama headers with optional forwarded request headers.
+
+        HTTP header names are case-insensitive, but plain dicts are not, so forwarded
+        headers are filtered by lowercase name to avoid sending both the forwarded and
+        configured value for the same header (e.g. "authorization" and "Authorization").
+        """
+        configured_names = {name.lower() for name in self.ollama_headers}
+        headers = {k: v for k, v in (request_headers or {}).items() if k.lower() not in configured_names}
+        headers.update(self.ollama_headers)
+        return headers
 
     def _maybe_prepend_system_prompt(self, messages: list) -> list:
         """If a system prompt is configured on the MCP manager, ensure it is the first message.
@@ -37,7 +50,7 @@ class ProxyService:
 
     async def health_check(self) -> Dict[str, Any]:
         """Check the health of the Ollama server and MCP setup"""
-        ollama_healthy = await check_ollama_health_async(self.mcp_manager.ollama_url)
+        ollama_healthy = await check_ollama_health_async(self.mcp_manager.ollama_url, headers=self.ollama_headers)
         return {
             "status": "healthy" if ollama_healthy else "degraded",
             "ollama_status": "running" if ollama_healthy else "not accessible",
@@ -56,7 +69,7 @@ class ProxyService:
         Returns:
             Either a dictionary response or a StreamingResponse
         """
-        if not await check_ollama_health_async(self.mcp_manager.ollama_url):
+        if not await check_ollama_health_async(self.mcp_manager.ollama_url, headers=self.ollama_headers):
             raise httpx.RequestError("Ollama server not accessible", request=None)
 
         try:
@@ -83,7 +96,9 @@ class ProxyService:
         final_payload["stream"] = False  # Explicitly disable streaming to get single JSON response
         final_payload["messages"] = messages
         final_payload["tools"] = None  # Don't allow more tool calls
-        resp = await self.http_client.post(f"{self.mcp_manager.ollama_url}{endpoint}", json=final_payload)
+        resp = await self.http_client.post(
+            f"{self.mcp_manager.ollama_url}{endpoint}", json=final_payload, headers=self.ollama_headers
+        )
         resp.raise_for_status()
         return resp.json()
 
@@ -117,7 +132,9 @@ class ProxyService:
             # Call Ollama
             current_payload = dict(payload)
             current_payload["messages"] = messages
-            resp = await self.http_client.post(f"{self.mcp_manager.ollama_url}{endpoint}", json=current_payload)
+            resp = await self.http_client.post(
+                f"{self.mcp_manager.ollama_url}{endpoint}", json=current_payload, headers=self.ollama_headers
+            )
             resp.raise_for_status()
             result = resp.json()
 
@@ -155,7 +172,10 @@ class ProxyService:
         async def stream_ollama(payload_to_send):
             async with httpx.AsyncClient(timeout=None) as client:
                 async with client.stream(
-                    "POST", f"{self.mcp_manager.ollama_url}{endpoint}", json=payload_to_send
+                    "POST",
+                    f"{self.mcp_manager.ollama_url}{endpoint}",
+                    json=payload_to_send,
+                    headers=self.ollama_headers,
                 ) as resp:
                     async for chunk in resp.aiter_bytes():
                         yield chunk
@@ -243,6 +263,7 @@ class ProxyService:
 
             # Copy headers but exclude host
             headers = {k: v for k, v in request.headers.items() if k.lower() != "host"}
+            headers = self._get_ollama_headers(headers)
 
             # Get request body if present
             body = await request.body()

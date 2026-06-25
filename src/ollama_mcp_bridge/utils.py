@@ -77,8 +77,14 @@ def is_port_in_use(host: str, port: int) -> Tuple[bool, Optional[str]]:
             s.bind((host, port))
             return False, None
         except socket.error as e:
-            if e.errno == errno.EADDRINUSE:
+            winerror = getattr(e, "winerror", None)
+            if e.errno == errno.EADDRINUSE or winerror == 10048:
                 return True, f"Port {port} is already in use on {host}. Please use a different port with --port."
+            elif e.errno == errno.EACCES or winerror == 10013:
+                return (
+                    True,
+                    f"Port {port} is binding to a privileged port on {host}. Please use a different port with --port.",
+                )
             elif e.errno == errno.EADDRNOTAVAIL:
                 return True, f"Cannot bind to host '{host}': address not available. Please check the --host value."
             else:
@@ -109,12 +115,12 @@ def configure_cors(app):
     )
 
 
-def check_ollama_health(ollama_url: str, timeout: int = 3) -> bool:
+def check_ollama_health(ollama_url: str, timeout: int = 3, headers: Optional[Dict[str, str]] = None) -> bool:
     """Check if Ollama server is running and accessible (sync version for CLI)."""
     try:
         is_set, timeout_override = get_ollama_proxy_timeout_config()
         effective_timeout = timeout_override if is_set else timeout
-        resp = httpx.get(f"{ollama_url}/api/tags", timeout=effective_timeout)
+        resp = httpx.get(f"{ollama_url}/api/tags", timeout=effective_timeout, headers=headers)
         if resp.status_code == 200:
             logger.success("✓ Ollama server is accessible")
             return True
@@ -125,13 +131,15 @@ def check_ollama_health(ollama_url: str, timeout: int = 3) -> bool:
         return False
 
 
-async def check_ollama_health_async(ollama_url: str, timeout: int = 3) -> bool:
+async def check_ollama_health_async(
+    ollama_url: str, timeout: int = 3, headers: Optional[Dict[str, str]] = None
+) -> bool:
     """Check if Ollama server is running and accessible (async version for FastAPI)."""
     try:
         is_set, timeout_override = get_ollama_proxy_timeout_config()
         effective_timeout = timeout_override if is_set else timeout
         async with httpx.AsyncClient() as client:
-            resp = await client.get(f"{ollama_url}/api/tags", timeout=effective_timeout)
+            resp = await client.get(f"{ollama_url}/api/tags", timeout=effective_timeout, headers=headers)
             if resp.status_code == 200:
                 return True
             logger.error(f"Ollama server not accessible at {ollama_url}")
@@ -161,8 +169,47 @@ async def iter_ndjson_chunks(chunk_iterator):
             logger.debug(f"Error parsing trailing NDJSON: {e}")
 
 
+def parse_upstream_headers(env_value: Optional[str], header_flags: Optional[list] = None) -> Optional[Dict[str, str]]:
+    """Build the upstream headers dict from the UPSTREAM_HEADERS env var and CLI flags.
+
+    Args:
+        env_value: Raw UPSTREAM_HEADERS env var, expected to be a JSON object of
+            header name/value pairs (e.g. '{"Authorization": "Bearer xxx"}').
+        header_flags: Repeatable --upstream-header values, each "Name: Value".
+
+    CLI flags override env entries with the same header name. Returns None when no
+    headers are configured.
+    """
+    headers: Dict[str, str] = {}
+
+    if env_value and env_value.strip():
+        try:
+            parsed = json.loads(env_value)
+        except json.JSONDecodeError as e:
+            raise BadParameter(f"UPSTREAM_HEADERS must be a valid JSON object: {e}")
+        if not isinstance(parsed, dict):
+            raise BadParameter("UPSTREAM_HEADERS must be a JSON object of header name/value pairs")
+        for name, value in parsed.items():
+            if not str(name).strip():
+                raise BadParameter("UPSTREAM_HEADERS contains an empty header name")
+            headers[str(name).strip()] = str(value)
+
+    for raw in header_flags or []:
+        name, sep, value = raw.partition(":")
+        if not sep or not name.strip():
+            raise BadParameter(f"Invalid --upstream-header {raw!r}, expected 'Name: Value'")
+        headers[name.strip()] = value.strip()
+
+    return headers or None
+
+
 def validate_cli_inputs(
-    config: str, host: str, port: int, ollama_url: str, max_tool_rounds: int = None, system_prompt: str = None
+    config: str,
+    host: str,
+    port: int,
+    ollama_url: str,
+    max_tool_rounds: int = None,
+    system_prompt: str = None,
 ):
     """Validate CLI inputs for config file, host, port, ollama_url, max_tool_rounds and system_prompt.
 
